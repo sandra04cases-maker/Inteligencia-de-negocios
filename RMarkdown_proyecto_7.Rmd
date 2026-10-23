@@ -1,0 +1,849 @@
+---
+title: "El impacto de la IA en la Productividad Empresarial"
+author: "Sandra Cases y Maite Sandoval"
+date: "2026-10-23"
+lang: es
+output:
+  pdf_document:
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+  - \floatplacement{table}{H}
+---
+
+\setcounter{tocdepth}{2}
+\tableofcontents
+\newpage
+
+
+# Introducción
+
+Este trabajo se ha realizado bajo los contenidos de la asignatura de Inteligencia de Negocios I. Partimos de un conjunto de bases de datos (indicadores de IA en la web de las empresas en 2023 y 2025, información financiera y una muestra empresarial de SABI) que hemos utilizado para plantear una pregunta y desarrollar un análisis que nos permita responderla.
+
+La literatura económica ha discutido durante décadas por qué las nuevas tecnologías tardan en reflejarse en la productividad. Solow (1987) resumió esta "paradoja de la productividad" al observar cómo los ordenadores no impactaban en las estadísticas de productividad, y Brynjolfsson, Rock y Syverson (2019) sostienen que con la inteligencia artificial puede repetirse lo mismo: sus beneficios exigen altas inversiones complementarias (formación, reorganización, implementación) que tardan años en reflejarse en los resultados Este contexto nos sirve para interpretar si la adopción de IA observada en las empresas españolas de la muestra se traduce ya en un mayor valor añadido por empleado.
+
+Al explorar las bases de datos vimos que analizaban el uso de la IA por parte de las empresas, y de ahí surgió nuestra pregunta de investigación inicial:
+
+> *¿La presencia de indicadores de IA es una apuesta respaldada por gasto en innovación?*
+
+Tras un análisis de los datos concluimos que no podíamos proporcionar una respuesta no sesgada a esta pregunta, por lo que decidimos seguir nuestro análisis con otra pregunta:
+
+> *¿Cómo influye el número de departamentos que utilizan IA en la productividad de las empresas, y de qué manera esta relación está condicionada por el tamaño de la empresa?*
+
+## Objetivos
+
+Medimos la productividad como valor añadido (VA, en miles de euros) por empleado en 2023, y la adopción de IA como el número de departamentos (de 0 a 5) en los que la web de la empresa muestra indicadores de IA:
+
+- DL: Distribución y logística.
+- MS: Marketing y ventas.
+- AM: Administración y gestión.
+- PGS: Producción de bienes o servicios.
+- ICS: Sistemas de información y comunicación.
+
+Nuestro análisis tiene un objetivo doble: determinar en primer lugar si la IA tiene algún efecto sobre la productividad de las empresas, siendo nuestra hipótesis que la IA provoca un efecto positivo sobre la productividad. Nuestro segundo objetivo es averiguar cómo el efecto se relaciona con el tamaño de la empresa y ver si es el mismo en todas o si difiere.
+
+Las tablas dinámicas se entregan en documento aparte; el código está en GitHub: https://github.com/sandra04cases-maker/Inteligencia-de-negocios
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.align = "center", fig.width = 7, fig.height = 3.5, fig.pos = "H", out.extra = "")
+
+library(readxl)
+library(mice)
+library(clickR)
+library(gridExtra)
+library(tidyverse)
+library(ggthemes)
+library(lmtest)
+library(ggeffects)
+
+fm <- function(x, d = 2) format(round(x, d), nsmall = d, decimal.mark = ",", big.mark = ".")
+
+options(width = 75)
+```
+
+```{r, include=FALSE}
+IA_2023   <- read_excel("Datos 26-27/indicadores_ia_web_2023.xlsx")
+IA_2025   <- read_excel("Datos 26-27/indicadores_ia_web_2025.xlsx")
+Info_f    <- read_excel("Datos 26-27/informacion_financiera.xlsx")
+M_empresa <- read_excel("Datos 26-27/muestra_empresarial_sabi.xlsx")
+```
+
+
+# Análisis inicial
+
+## Estructura de los datos iniciales
+```{r, include=FALSE}
+Datos <- list(
+  IA_2023   = IA_2023,
+  IA_2025   = IA_2025,
+  Info_f    = Info_f,
+  M_empresa = M_empresa
+)
+
+# Estructura y dimensiones de las tablas
+names(IA_2023)
+str(IA_2023)
+dim(IA_2023)
+class(IA_2023)
+names(IA_2025)
+str(IA_2025)
+dim(IA_2025)
+class(IA_2025)
+names(Info_f)
+str(Info_f)
+dim(Info_f)
+class(Info_f)
+names(M_empresa)
+str(M_empresa)
+dim(M_empresa)
+class(M_empresa)
+```
+
+Resumen de las dimensiones de cada tabla:
+
+```{r}
+knitr::kable(
+  data.frame(
+    Tabla     = names(Datos),
+    Filas     = sapply(Datos, nrow),
+    Columnas  = sapply(Datos, ncol),
+    row.names = NULL
+  ),
+  caption = "Dimensiones de las tablas"
+)
+```
+
+# Limpieza
+
+
+```{r, include=FALSE}
+
+M_empresa <- M_empresa |> 
+  as.data.frame() |> 
+  fix_NA() |> 
+  as_tibble()
+
+Info_f <- Info_f |> 
+  as.data.frame() |> 
+  fix_NA() |> 
+  as_tibble()
+
+IA_2023 <- IA_2023 |> 
+  as.data.frame() |> 
+  fix_NA() |> 
+  as_tibble()
+
+IA_2025 <- IA_2025 |> 
+  as.data.frame() |> 
+  fix_NA() |> 
+  as_tibble()
+```
+
+
+## Detección de datos faltantes
+Total de valores faltantes por tabla:
+
+```{r}
+sapply(Datos, function(df) sum(is.na(df)))
+```
+
+
+
+## Visualización gráfica de faltantes
+
+Al detectar el gran número de datos faltantes en la fuente de Información financiera (Info_f) hemos decidido realizar un gráfico para apreciarlos mejor.
+
+```{r, results="hide", fig.height=3.8, fig.width=8, out.width="90%", fig.pos="htbp", fig.cap="Mapa de valores faltantes en la fuente de información financiera."}
+invisible(mine.plot(as.data.frame(Info_f)))
+```
+
+```{r, include=FALSE} 
+colSums(is.na(Info_f))
+colSums(is.na(M_empresa))
+
+```
+
+
+Podemos apreciar que el gran número de NAs se concentra en las columnas INNO2022 e INNO2023 que hacen referencia al gasto en innovación, con unos valores faltantes de 4213 y 3967 respectivamente. En el caso de Muestra Empresarial (M_empresa) faltan tres códigos postales.
+
+Ante la gran cantidad de datos faltantes hemos decidido continuar con la limpieza de las fuentes de datos.
+
+## Diagnóstico sobre los datos faltantes
+
+### 1. Estandarización de "falsos NA"
+
+En primer lugar hemos utilizado la función fix_NA del paquete clickR para arreglar espacios en blanco, aunque nos hemos percatado de que no ha cambiado la cantidad de datos en la fuente.
+
+```{r, include=FALSE}
+Info_f_neta <- fix_NA(as.data.frame(Info_f))
+```
+
+
+### 2. Alternativa explorada: filtrar por INNO2023 e INNO2022
+
+Exploramos la posibilidad de eliminar las variables con NAs de la muestra.
+
+```{r}
+Info_f_filtrada <- Info_f_neta |>
+  drop_na(INNO2023, INNO2022)
+
+cat("Filas antes:", nrow(Info_f_neta),
+    "| después:", nrow(Info_f_filtrada), "\n")
+```
+
+Eliminar estos datos nos haría perder una parte muy grande de la muestra. Por eso, como primera aproximación, probamos a imputar los datos faltantes.
+
+### 3. Métodos de imputación para la sustitución de datos faltantes
+
+Probamos varios métodos de imputación sobre INNO2022, aunque más adelante veremos cómo hemos decidido descartar esta vía.
+
+```{r, fig.cap="Comparación de las distribuciones según los métodos de imputación de datos."}
+Info_f_base <- as_tibble(Info_f_neta) #Cómo antes lo hemos convertido en data frame para usar clickR ahora lo volvemos a tibble para usar el paquete tydiverse
+
+# 3.1 Preparación de la matriz numérica para imputar
+
+vars_predictoras <- c("INNO2022", "INNO2023", "SALES2022", "SALES2023",
+                      "EMP2022", "EMP2023", "CAP2022", "CAP2023", "MAT2022", "MAT2023")
+
+Info_f_base <- Info_f_neta |>
+  mutate(across(all_of(vars_predictoras), as.numeric))
+
+set.seed(123) #Controla la aleatoriedad
+
+# 3.2 Imputación simple determinista 
+
+Info_f_base$INNO2022_imp_simple_det <- Info_f_base$INNO2022 
+Info_f_base$INNO2022_imp_simple_det[is.na(Info_f_base$INNO2022)] <- mean(Info_f_base$INNO2022, na.rm = TRUE) #na.rm sirve para que calcule la media con los valores que hay, que ignore los NAs.
+
+
+# 3.3 Imputación simple estocástica
+Info_f_base$INNO2022_imp_simple_est <- Info_f_base$INNO2022
+
+Info_f_base$INNO2022_imp_simple_est[is.na(Info_f_base$INNO2022)] <- sample(
+  Info_f_base$INNO2022[!is.na(Info_f_base$INNO2022)],
+  sum(is.na(Info_f_base$INNO2022)),
+  replace = TRUE
+)
+
+
+# 3.4 Imputación múltiple (MICE)
+matriz_mice <- Info_f_base |> select(all_of(vars_predictoras))
+imp <- mice(matriz_mice, m = 5, printFlag = FALSE)
+
+completed_data <- mice::complete(imp, "all")
+Info_f_base$INNO2022_mice <- completed_data[[1]]$INNO2022
+
+
+# 3.5 Comparación gráfica de los métodos de imputación
+boxplot(
+  log1p(pmax(0, Info_f_base$INNO2022)),
+  log1p(pmax(0, Info_f_base$INNO2022_imp_simple_det)),
+  log1p(pmax(0, Info_f_base$INNO2022_imp_simple_est)),
+  log1p(pmax(0, Info_f_base$INNO2022_mice)),
+  names = c("Original", "Determinista", "Estocástica", "MICE"),
+  col = c("burlywood1", "indianred1", "lightcyan1", "thistle1"),
+  main = "Comparación de los métodos de imputación"
+)
+
+# 3.6 Descartada la imputación: seguimos con los valores reales
+Info_f_limpia <- Info_f_base |>
+  select(-INNO2022_imp_simple_det, -INNO2022_imp_simple_est, -INNO2022_mice) |>
+  mutate(EMP2023_obs = EMP2023)
+```
+
+La imputación determinista simple deforma la distribución: desplaza la mediana y reduce la variabilidad. La estocástica y MICE conservan mejor la distribución original, y MICE es preferible porque aprovecha la relación con otras variables financieras. Aun así, con una alta cantidad de NAs, ninguna imputación es del todo fiable.
+
+
+```{r, include=FALSE}
+
+# 1. Función de estandarización de URLs
+limpiar_url <- function(x) {
+  x <- as.character(x)
+  x <- tolower(str_trim(x))
+  x <- str_remove(x, "^https?://")
+  x <- str_remove(x, "^www\\.")
+  x <- str_remove(x, "[/?#].*$")
+  na_if(str_trim(x), "")
+}
+
+# 2. Generación de claves en la muestra empresarial base
+M_empresa <- M_empresa |>
+  mutate(
+    BvD       = str_trim(as.character(BvD)),
+    url_ref   = coalesce(as.character(URL.REDIRECCIONADAS.2025),
+                         as.character(URL.REDIRECCIONADAS.2023),
+                         as.character(URL.DE.SABI.2023),
+                         as.character(Web)),
+    url_clean = limpiar_url(url_ref)
+  )
+
+# 3. Preparación de Info_f_prep:
+Info_f_prep <- Info_f_limpia |>
+  mutate(BvD = str_trim(as.character(BvD))) |>
+  distinct(BvD, .keep_all = TRUE) |>
+  select(-any_of(c(
+    "URL.REDIRECCIONADAS.2025",
+    "URL.DE.SABI.2023",
+    "URL.REDIRECCIONADAS.2023",
+    "Web",
+    "url_ref",
+    "url_clean"
+  )))
+
+# 4. Preparación de las bases de IA (limpiando URLs y asegurando unicidad)
+IA_2023_prep <- IA_2023 |>
+  mutate(url_clean = limpiar_url(url)) |>
+  filter(!is.na(url_clean) & url_clean != "") |>
+  distinct(url_clean, .keep_all = TRUE) |>
+  select(url_clean, starts_with("respuesta_IA")) |>
+  rename_with(~ paste0(.x, "_2023"), starts_with("respuesta_IA"))
+
+IA_2025_prep <- IA_2025 |>
+  mutate(url_clean = limpiar_url(url)) |>
+  filter(!is.na(url_clean) & url_clean != "") |>
+  distinct(url_clean, .keep_all = TRUE) |>
+  select(url_clean, starts_with("respuesta_IA")) |>
+  rename_with(~ paste0(.x, "_2025"), starts_with("respuesta_IA"))
+
+# 5. Integración secuencial
+datos_unificados <- M_empresa |>
+  left_join(Info_f_prep,  by = "BvD") |>
+  left_join(IA_2023_prep, by = "url_clean") |>
+  left_join(IA_2025_prep, by = "url_clean")
+
+# 6. Verificación de dimensiones
+cat("Filas M_empresa:", nrow(M_empresa), "\n")
+cat("Filas totales tras las uniones:", nrow(datos_unificados), "\n")
+cat("Columnas totales:", ncol(datos_unificados), "\n")
+
+stopifnot(nrow(datos_unificados) == nrow(M_empresa))
+```
+
+
+
+```{r, include=FALSE}
+datos_unificados |>
+  summarise(
+    total_muestra = n(),
+    con_innovacion_imputada = sum(!is.na(INNO2022)),
+    con_ia_2025 = sum(!is.na(respuesta_IAIA1_2025)),
+    muestra_analisis_completa = sum(!is.na(INNO2022) & !is.na(respuesta_IAIA1_2025))
+  )
+
+colSums(is.na(datos_unificados))
+```
+
+## Diagnóstico de datos faltantes y redefinición de la pregunta
+
+El objetivo inicial era responder: **¿La presencia de indicadores de IA en la web es una apuesta respaldada por gasto en innovación?**
+
+Sin embargo, tras el análisis realizado hemos detectado que las variables de innovación presentan una alta tasa de valores nulos:
+```{r}
+n_total <- nrow(datos_unificados)
+
+knitr::kable(
+  tibble(
+    Base = c("IA 2023", "IA 2025", "Información financiera"),
+    Empresas= c(
+      sum(!is.na(datos_unificados$respuesta_IADL_2023)),
+      sum(!is.na(datos_unificados$respuesta_IAIA1_2025)),
+      sum(datos_unificados$BvD %in% Info_f_prep$BvD)),
+    Porcentaje_con_información = round(100 * Empresas/ n_total, 1),
+    Porcentaje_sin_información = round(100 - Porcentaje_con_información, 1)
+  ),
+  col.names = c("Base", "Empresas", "% con información", "% sin información"),
+  format.args = list(decimal.mark = ","),
+  caption = "Empresas de la muestra con y sin información en cada base"
+)
+```
+
+Al integrar las tablas comprobamos que solo 7.946 de las 20.470 empresas de la muestra (38,8 %) tienen información financiera, por lo que carecemos de cualquier dato financiero para el 61,2 % restante. Además, dentro de las empresas con información financiera, el gasto en innovación falta en aproximadamente la mitad de los casos (`r fm(100 * mean(is.na(Info_f$INNO2023)), 1)` % en INNO2023). En conjunto, solo `r fm(sum(!is.na(Info_f$INNO2023)), 0)` empresas, alrededor del `r fm(100 * sum(!is.na(Info_f$INNO2023)) / n_total, 0)` % de la muestra, tienen observado el gasto en innovación de 2023.
+
+Creemos que con esta calidad de datos no podemos hacer un análisis adecuado para responder con certeza la pregunta planteada (aunque podamos imputar como hemos mostrado antes, los valores no serían reales, e imputar la variable clave para cerca del 80 % de la muestra introduciría un sesgo alto; además, la imputación de INNO no resuelve la ausencia total de datos financieros del 61 % de las empresas). 
+
+# Pregunta de investigación final
+
+> *¿Cómo influye el número de departamentos que utilizan IA en la productividad de las empresas, y de qué manera esta relación está condicionada por el tamaño de la empresa?*
+
+## Preparación de la muestra de análisis
+
+
+
+```{r, include=FALSE}
+
+vars_ia_2023 <- c("respuesta_IADL_2023", "respuesta_IAMS_2023", "respuesta_IAAM_2023",
+                  "respuesta_IAPGS_2023", "respuesta_IAICS_2023")
+
+datos_analisis <- datos_unificados |>
+  drop_na(VA2023, EMP2023_obs, all_of(vars_ia_2023)) |>
+  filter(EMP2023_obs > 0, VA2023 >= 0) |>
+  mutate(
+    Num_Departamentos_IA = respuesta_IADL_2023 + respuesta_IAMS_2023 +
+                           respuesta_IAAM_2023 + respuesta_IAPGS_2023 + respuesta_IAICS_2023,
+    Productividad_Original = as.numeric(VA2023) / EMP2023_obs
+  )
+```
+
+Partimos de las empresas con información financiera y filtramos hasta quedarnos con las que tienen respuestas de IA en 2023, valor añadido y empleo observados, y empleo positivo y VA no negativo (necesario para dividir y para aplicar el logaritmo):
+
+```{r}
+# Calculamos las variables del "embudo" temporalmente solo para dibujar la tabla
+datos_filtrados <- datos_unificados |> filter(BvD %in% Info_f_prep$BvD)
+df2 <- datos_filtrados |> drop_na(all_of(vars_ia_2023))
+df3 <- df2 |> drop_na(VA2023, EMP2023_obs)
+df4 <- df3 |> filter(EMP2023_obs > 0, VA2023 >= 0)
+
+knitr::kable(
+  tibble(
+    Etapa = c("Empresas en la muestra", "Con información financiera",
+              "Con respuestas de IA 2023", "Con VA y empleo observados", "Muestra final"),
+    Cantidad = c(nrow(datos_unificados), nrow(datos_filtrados), nrow(df2), nrow(df3), nrow(df4))
+  ),
+  caption = "Datos filtrados"
+)
+
+# Tabla resumen de la muestra final
+knitr::kable(
+  datos_analisis |>
+    group_by(Size) |>
+    summarise(Cantidad = n(),
+              Empresas_que_usan_IA = round(100 * mean(Num_Departamentos_IA > 0), 1),
+              Mediana_productividad = round(median(Productividad_Original), 1),
+              .groups = "drop"),
+  col.names = c("Tamaño", "Empresas", "% que usa IA", "Mediana productividad (miles € / empleado)"),
+  format.args = list(decimal.mark = ","),
+  caption = "Muestra final por tamaño de empresa"
+)
+```
+
+En la tabla "Muestra final por tamaño de empresa" se aprecia que las empresas Large tienen la productividad mediana más baja (69 miles de euros por empleado frente a unos 200 en el resto), aunque solo hay 21 y únicamente una usa IA. El mayor porcentaje de adopción corresponde a las Medium (5,5 %).
+
+# Análisis exploratorio
+
+## Análisis univariante
+
+### Tamaño de las empresas y número de departamentos con IA
+
+```{r, fig.height=3, fig.cap="Distribución del tamaño de las empresas y número de departamentos con IA."}
+datos_analisis <- datos_analisis |>
+  mutate(Size = factor(Size, levels = c("Micro", "Small", "Medium", "Large")))
+
+tab_size <- datos_analisis |> count(Size) |> mutate(pct = round(100 * n / sum(n), 1))
+tab_ia   <- datos_analisis |> count(Num_Departamentos_IA) |> mutate(pct = round(100 * n / sum(n), 1))
+
+n_con_ia   <- sum(datos_analisis$Num_Departamentos_IA > 0)
+pct_sin_ia <- 100 * mean(datos_analisis$Num_Departamentos_IA == 0)
+
+g_size <- ggplot(tab_size, aes(Size, n)) +
+  geom_col(fill = "lightsteelblue2") +
+  geom_text(aes(label = paste0(pct, "%")), vjust = -0.3, size = 3) +
+  labs(title = "Empresas por tamaño", x = NULL, y = "Nº de empresas") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) + theme_minimal()
+
+g_ia <- ggplot(tab_ia, aes(factor(Num_Departamentos_IA), n)) +
+  geom_col(fill = "lightpink1") +
+  geom_text(aes(label = paste0(pct, "%")), vjust = -0.3, size = 3) +
+  labs(title = "Departamentos con IA", x = "Nº de departamentos", y = NULL) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) + theme_minimal()
+
+grid.arrange(g_size, g_ia, ncol = 2)
+```
+
+La muestra final está formada por `r fm(nrow(datos_analisis), 0)` empresas y la dominan las pequeñas: Small representa el `r fm(tab_size$pct[tab_size$Size == "Small"], 1)` %, Micro el `r fm(tab_size$pct[tab_size$Size == "Micro"], 1)` %, Medium el `r fm(tab_size$pct[tab_size$Size == "Medium"], 1)` % y Large solo el `r fm(tab_size$pct[tab_size$Size == "Large"], 1)` % (`r tab_size$n[tab_size$Size == "Large"]` empresas). Además, la adopción de IA es muy poco frecuente: el `r fm(pct_sin_ia, 1)` % no usa IA en ningún departamento y solo `r n_con_ia` empresas la usan en al menos uno.
+
+### Departamentos con IA, empleo y valor añadido
+
+```{r, fig.width=14, fig.height=3.5, out.width="100%", fig.cap="Distribución del uso de IA por departamento, empleo y valor añadido en la muestra."}
+# Gráfico 1: Barras
+g_dep <- datos_analisis |>
+  summarise(across(all_of(vars_ia_2023), ~ round(100 * mean(.x), 2))) |>
+  pivot_longer(everything(), names_to = "Departamento", values_to = "pct") |>
+  mutate(Departamento = str_remove_all(Departamento, "respuesta_IA|_2023")) |>
+  ggplot(aes(reorder(Departamento, pct), pct)) +
+  geom_col(fill = "lightpink2") + coord_flip() +
+  labs(title = "% de empresas con IA", x = NULL, y = "%") + 
+  theme_minimal()
+
+# Gráfico 2: Histograma Empleo (Quitamos title y lo pasamos a la x)
+g_emp <- ggplot(datos_analisis, aes(EMP2023_obs)) +
+  geom_histogram(bins = 30, fill = "#79CDCD") + scale_x_log10() +
+  labs(title = NULL, x = "Empleo", y = NULL) + 
+  theme_minimal()
+
+# Gráfico 3: Histograma VA (Quitamos title y lo pasamos a la x)
+g_va <- ggplot(datos_analisis, aes(as.numeric(VA2023))) +
+  geom_histogram(bins = 30, fill = "#63B8FF") + scale_x_log10() +
+  labs(title = NULL, x = "Valor Añadido", y = NULL) + 
+  theme_minimal()
+
+grid.arrange(g_dep, g_emp, g_va, ncol = 3)
+```
+
+
+El porcentaje de empresas con IA es bajo en los cinco departamentos (en todos los casos por debajo del 2 %). El empleo y el valor añadido presentan distribuciones muy asimétricas, con muchas empresas pequeñas y unas pocas muy grandes: la mediana de empleo es de `r fm(median(datos_analisis$EMP2023_obs), 0)` trabajadores frente a una media de `r fm(mean(datos_analisis$EMP2023_obs), 1)`, y la mediana del Valor Añadido es `r fm(median(as.numeric(datos_analisis$VA2023)), 0)`. Por ello, en los gráficos usamos escala logarítmica.
+
+### Distribución de la productividad
+
+```{r, include=FALSE}
+descriptive(as.data.frame(datos_analisis["Productividad_Original"]))
+
+grafico_original <- ggplot(datos_analisis, aes(y = Productividad_Original)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(
+    title = "Distribución Original",
+    y = "Productividad (VA / empleado)"
+  ) +
+  theme_minimal() +
+  scale_x_continuous(breaks = NULL)
+
+grafico_original
+```
+
+```{r, results='hide'}
+datos_analisis <- datos_analisis |>
+  mutate(
+    Productividad_Log10 = log10(Productividad_Original + 1)
+  )
+
+descriptive(as.data.frame(datos_analisis[, c("Productividad_Original", "Productividad_Log10")]))
+```
+
+```{r, include=FALSE}
+# 3. Gráfico tras la transformación
+grafico_log10 <- ggplot(datos_analisis, aes(y = Productividad_Log10)) +
+  geom_boxplot(fill = "#79CDCD") +
+  labs(
+    title = "Distribución con Log10",
+    y = "Log10(Productividad + 1)"
+  ) +
+  theme_minimal() +
+  scale_x_continuous(breaks = NULL)
+
+grafico_log10
+```
+
+```{r, fig.height=3, fig.cap="Transformación logarítmica de la productividad (VA por empleado)."}
+grid.arrange(grafico_original, grafico_log10, ncol = 2)
+```
+
+La productividad original (V.A. por empleado) es extremadamente asimétrica, con valores extremos que dominan la escala del gráfico. Tras aplicar la transformación log10(x + 1), la distribución resulta mucho más simétrica y adecuada para el análisis estadístico.
+
+## Análisis bivariante
+
+### Productividad según nº de departamentos con IA y tamaño
+
+```{r}
+resultados <- datos_analisis |>
+  group_by(Size, Num_Departamentos_IA) |>
+  summarise(
+    Total_Empresas = n(),
+    Media_Productividad_Log = mean(Productividad_Log10, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  filter(Total_Empresas >= 5)   # Descartamos grupos con menos de 5 empresas
+
+knitr::kable(resultados, digits = 3,
+             col.names = c("Tamaño", "Nº departamentos con IA", "Empresas", "Productividad media (log10)"),
+             format.args = list(decimal.mark = ","),
+             caption = "Productividad media (log10) por tamaño y nº de departamentos con IA")
+```
+
+
+```{r, fig.width=10, fig.height=5, out.width="100%", fig.cap="Productividad frente a la adopción de IA, segmentada por tamaño de empresa."}
+datos_analisis |>
+  mutate(Usa_IA = if_else(Num_Departamentos_IA > 0, "Usa IA", "No usa IA")) |>
+  ggplot(aes(x = Usa_IA, y = Productividad_Log10, fill = Size)) +
+  geom_boxplot(alpha = 0.8, outlier.size = 1) + 
+  facet_wrap(~ Size, ncol = 4) +
+  theme_minimal() + 
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank()
+  ) +
+  labs(x = NULL, y = "Log10(Productividad + 1)")
+```
+
+No se aprecia un patrón claro de aumento de la productividad con el número de departamentos que usan IA. Además, los grupos con más departamentos tienen muy pocas empresas, por lo que las diferencias entre grupos son poco fiables. Esto se debe a que la gran mayoría de las empresas no usa IA. No se observa, por tanto, un patrón claro en esta fase.
+
+
+### Tamaño y uso de IA
+
+```{r, results='hide', fig.height=2.4, fig.width=7, out.width="85%", fig.cap="Adopción de inteligencia artificial segmentado por tamaño corporativo."}
+datos_bi <- datos_analisis |>
+  mutate(Usa_IA = factor(if_else(Num_Departamentos_IA > 0, "Usa IA", "No usa IA")))
+
+ggplot(datos_bi, aes(Size, fill = Usa_IA)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Uso de IA según tamaño", x = NULL, y = "% de empresas", fill = NULL) +
+  theme_minimal()
+
+tabla_size_ia <- table(datos_bi$Size, datos_bi$Usa_IA)
+tabla_size_ia
+pct_size_ia <- round(100 * prop.table(tabla_size_ia, 1), 1)
+pct_size_ia
+
+set.seed(123)
+chi_size_ia <- chisq.test(tabla_size_ia, simulate.p.value = TRUE, B = 10000)
+chi_size_ia
+```
+
+El uso de IA aumenta con el tamaño de la empresa: la usa el `r fm(pct_size_ia["Micro", "Usa IA"], 1)` % de las Micro, el `r fm(pct_size_ia["Small", "Usa IA"], 1)` % de las Small y el `r fm(pct_size_ia["Medium", "Usa IA"], 1)` % de las Medium, y la asociación entre tamaño y uso de IA es significativa (chi-cuadrado con p simulado < 0,001). En Large solo hay `r tabla_size_ia["Large", "Usa IA"]` empresa con IA, por lo que ese porcentaje no es fiable.
+
+
+### Productividad según tamaño y según uso de IA
+
+```{r,results='hide', fig.cap="Distribución de la productividad base según el tamaño corporativo"}
+ggplot(datos_analisis, aes(Size, Productividad_Log10, fill = Size)) +
+  geom_boxplot() +
+  labs(title = "Productividad según tamaño", x = NULL, y = "Log10(Productividad + 1)") +
+  theme_minimal() + theme(legend.position = "none")
+
+anova(lm(Productividad_Log10 ~ Size, data = datos_analisis))
+
+t_ia <- t.test(Productividad_Log10 ~ Usa_IA, data = datos_bi)
+t_ia
+```
+
+Al analizar estas variables, los datos confirman que el tamaño de la empresa es un factor determinante en la productividad (ANOVA, p < 0,001). Como se observa en el gráfico de cajas, las pymes (Micro, Small y Medium) de nuestra muestra mantienen niveles de eficiencia muy similares entre sí, mientras que las empresas de tamaño Large presentan un desempeño por empleado notablemente inferior.
+Por otro lado, si nos fijamos solo en el uso de IA, la tecnología por sí sola no parece marcar distancias. De hecho, las productividades medias en escala $\log_{10}$ son prácticamente iguales entre las que usan IA (2,360) y las que no (2,357), algo que corrobora el test t de Welch ($p = 0,91$). En definitiva, adoptar IA no se traduce automáticamente en más valor añadido por empleado. Por eso, en el siguiente apartado pasamos a la modelización para ver si las cosas cambian al cruzar ambos factores a la vez.
+
+
+
+### Empleo y productividad
+
+```{r, include=FALSE}
+
+cor_emp <- cor.test(log10(datos_analisis$EMP2023_obs), datos_analisis$Productividad_Log10,
+                    method = "spearman", exact = FALSE)
+cor_emp
+
+cor_dep <- cor(datos_analisis[, vars_ia_2023])
+round(cor_dep, 2)
+```
+
+Existe una correlación negativa muy débil entre empleo y productividad (Spearman $\rho$ = `r fm(cor_emp$estimate, 3)`): es estadísticamente significativa por el tamaño de la muestra, pero su magnitud es pequeña. Por otro lado, las correlaciones entre departamentos (entre `r fm(min(cor_dep[lower.tri(cor_dep)]), 2)` y `r fm(max(cor_dep[lower.tri(cor_dep)]), 2)`) indican que las empresas que usan IA en un departamento tienden a usarla también en otros, lo que justifica resumir la adopción con el número de departamentos.
+
+# Modelización (regresión lineal)
+
+El análisis anterior es descriptivo. Para contrastar si la relación entre IA y productividad cambia según el tamaño, ajustamos un modelo con interacción entre el número de departamentos con IA y el tamaño, y lo comparamos con un modelo sin interacción. Tomamos Medium como categoría de referencia porque Large solo tiene `r tab_size$n[tab_size$Size == "Large"]` empresas, solo una de ellas con IA, lo que haría inestables los coeficientes.
+
+```{r, results='hide'}
+datos_analisis <- datos_analisis |>
+  mutate(Size = relevel(factor(Size), ref = "Medium"))
+
+modelo_base2  <- lm(Productividad_Log10 ~ Num_Departamentos_IA + Size, data = datos_analisis)
+modelo_inter2 <- lm(Productividad_Log10 ~ Num_Departamentos_IA * Size, data = datos_analisis)
+
+summary(modelo_inter2)
+anova(modelo_base2, modelo_inter2)
+```
+
+```{r}
+anova_comp <- anova(modelo_base2, modelo_inter2)
+knitr::kable(
+  data.frame(Modelo = c("Sin interacción", "Con interacción"),
+             GL_residuales = anova_comp$Res.Df,
+             SC_residual = round(anova_comp$RSS, 2),
+             F = c(NA, round(anova_comp$F[2], 2)),
+             p = c(NA, round(anova_comp$`Pr(>F)`[2], 4))),
+  col.names = c("Modelo", "GL residuales", "SC residual", "F", "p-valor"),
+  format.args = list(decimal.mark = ","),
+  caption = "Comparación del modelo sin y con interacción"
+)
+```
+
+La comparación de ambos modelos (F = `r fm(anova_comp$F[2], 2)`, p = `r fm(anova_comp$"Pr(>F)"[2], 3)`) indica si permitir una pendiente de IA distinta para cada tamaño mejora el ajuste. Como veremos, esa mejora depende casi por completo de la única empresa Large con IA.
+
+## Interpretación de los coeficientes
+
+Como la respuesta es log10(Productividad + 1), cada coeficiente $\beta$ se interpreta como un factor multiplicativo de $10^{\beta}$ sobre la productividad.
+
+```{r}
+tabla_coef <- cbind(
+  Estimate = coef(modelo_inter2),
+  confint(modelo_inter2)
+)
+knitr::kable(
+  data.frame(
+    Coeficiente = rownames(tabla_coef),
+    Estimacion = round(tabla_coef[, "Estimate"], 3),
+    IC_inf = round(tabla_coef[, "2.5 %"], 3),
+    IC_sup = round(tabla_coef[, "97.5 %"], 3),
+    Factor = round(10^tabla_coef[, "Estimate"], 3),
+    p = round(summary(modelo_inter2)$coefficients[, "Pr(>|t|)"], 3),
+    row.names = NULL
+  ),
+  col.names = c("Coeficiente", "Estimación", "IC 95 % inf.", "IC 95 % sup.", "Factor 10^beta", "p-valor"),
+  format.args = list(decimal.mark = ","),
+  caption = "Coeficientes del modelo con interacción (referencia: Medium)"
+)
+
+cat("R2:", round(summary(modelo_inter2)$r.squared, 4),
+    "| R2 ajustado:", round(summary(modelo_inter2)$adj.r.squared, 4),
+    "| Sigma:", round(summary(modelo_inter2)$sigma, 4), "\n")
+```
+
+```{r, include=FALSE}
+b_ia  <- tabla_coef["Num_Departamentos_IA", ]
+p_ia  <- summary(modelo_inter2)$coefficients["Num_Departamentos_IA", "Pr(>|t|)"]
+r2    <- summary(modelo_inter2)$r.squared
+```
+
+Para las empresas Medium sin IA, la productividad esperada es de aproximadamente `r fm(10^tabla_coef["(Intercept)", "Estimate"] - 1, 0)` miles de euros de VA por empleado (al deshacer el logaritmo, este valor se aproxima a la media geométrica, no a la media aritmética). Cada departamento adicional con IA multiplica la productividad de las Medium por `r fm(10^b_ia["Estimate"], 2)` (IC 95 % del coeficiente, de `r fm(b_ia["2.5 %"], 3)` a `r fm(b_ia["97.5 %"], 3)` en escala log10; p = `r fm(p_ia, 2)`), es decir, no hay un efecto apreciable. 
+
+El modelo explica solo el `r fm(100 * r2, 1)` % de la variabilidad (R² = `r fm(r2, 3)`). Los coeficientes de tamaño indican que, respecto a las Medium, la productividad esperada es mayor en las Micro y menor en las Large. El coeficiente de interacción con Large (p = `r fm(summary(modelo_inter2)$coefficients["Num_Departamentos_IA:SizeLarge", "Pr(>|t|)"], 3)`) es muy grande pero imposible de interpretar con fiabilidad, porque se estima a partir de una única empresa Large con IA.
+
+## Diagnóstico de las asunciones del modelo
+
+**Linealidad, homocedasticidad, normalidad y outliers influyentes (gráficos):**
+
+```{r, fig.height=6, fig.cap="Evaluación de linealidad, normalidad, homocedasticidad y puntos influyentes del modelo."}
+par(mfrow = c(2, 2))
+plot(modelo_inter2)
+par(mfrow = c(1, 1))
+```
+
+El gráfico de residuos frente a valores ajustados está centrado en cero y sin curvatura, por lo que no hay problema de linealidad (la forma en columnas se debe a que los predictores son discretos). El Q-Q plot muestra una cola derecha pesada, es decir, los residuos no son perfectamente normales.
+
+**Outliers influyentes (distancia de Cook):**
+
+```{r, fig.cap="Identificación de observaciones influyentes mediante la distancia de Cook."}
+cooks <- cooks.distance(modelo_inter2)
+lev <- hatvalues(modelo_inter2)
+
+cat("Observaciones con Cook indefinida (NaN):", sum(is.na(cooks)), "\n")
+cat("Observaciones con apalancamiento > 0,999:", sum(lev > 0.999), "\n")
+cat("Cook máxima (sin NaN):", round(max(cooks, na.rm = TRUE), 4), "\n")
+cat("Observaciones con Cook > 0.5:", sum(cooks > 0.5, na.rm = TRUE), "\n")
+cat("Observaciones con Cook > 4/n:", sum(cooks > 4 / length(cooks), na.rm = TRUE), "\n")
+
+plot(cooks, type = "h", main = "Distancia de Cook", ylab = "Cook's D")
+abline(h = 4 / length(cooks), col = "red", lty = 2)
+```
+
+Al realizar el diagnóstico visual de las asunciones, el gráfico Q-Q Residuals muestra una cola derecha pesada, es decir, los residuos no son perfectamente normales. El gráfico de Scale-Location sugiere una ligera heterocedasticidad. En cuanto a los valores atípicos, la distancia de Cook máxima entre las observaciones donde se puede calcular es `r fm(max(cooks, na.rm = TRUE), 2)`, muy por debajo del umbral de 0,5. Sin embargo, hay una observación con distancia de Cook indefinida: es la única empresa Large que usa IA, que el modelo ajusta exactamente (apalancamiento = 1), por lo que no aparece en el gráfico Residuals vs Leverage y su influencia no puede medirse con este estadístico.
+
+**Contraste formal de homocedasticidad:**
+
+```{r}
+bp <- bptest(modelo_inter2)
+```
+
+El test de Breusch-Pagan (BP = `r fm(bp$statistic, 2)`, p = `r fm(bp$p.value, 3)`) contrasta formalmente la homocedasticidad y complementa el gráfico Scale-Location. Para comprobar que las conclusiones no dependen de estos incumplimientos, en el apartado siguiente estimamos además una regresión robusta.
+
+**Independencia de las observaciones:** cada fila es una empresa distinta (sin medidas repetidas), por lo que asumimos independencia. No obstante, podría existir dependencia por sector que no hemos modelizado.
+
+### Comprobación de robustez
+
+Si el diagnóstico muestra observaciones influyentes o heterocedasticidad, comparamos el modelo original con (a) el modelo sin los puntos más influyentes y (b) una regresión robusta.
+
+```{r, results='hide'}
+# (a) Sin puntos influyentes
+influyentes <-  which(cooks > 4 / length(cooks) | is.na(cooks))
+modelo_sin_inf <- lm(Productividad_Log10 ~ Num_Departamentos_IA * Size,
+                     data = datos_analisis[-influyentes, ])
+
+# (b) Regresión robusta
+modelo_robusto <- MASS::rlm(Productividad_Log10 ~ Num_Departamentos_IA * Size,
+                            data = datos_analisis)
+
+summary(modelo_sin_inf)$coefficients
+summary(modelo_robusto)$coefficients
+```
+
+```{r}
+t_rob <- summary(modelo_robusto)$coefficients
+p_micro <- summary(modelo_inter2)$coefficients["Num_Departamentos_IA:SizeMicro", "Pr(>|t|)"]
+```
+
+```{r}
+# Comparación de la pendiente de IA entre modelos
+knitr::kable(
+  data.frame(
+    Modelo = c("Original", "Sin influyentes", "Robusto"),
+    Beta_IA = round(c(coef(modelo_inter2)["Num_Departamentos_IA"],
+                      coef(modelo_sin_inf)["Num_Departamentos_IA"],
+                      coef(modelo_robusto)["Num_Departamentos_IA"]), 3)
+  ),
+  col.names = c("Modelo", "Coeficiente IA (Medium)"),
+  format.args = list(decimal.mark = ","),
+  caption = "Pendiente de IA en las empresas Medium según el modelo"
+)
+```
+
+El coeficiente de IA para las empresas Medium apenas cambia entre el modelo original, el modelo sin observaciones influyentes y el modelo robusto (entre -0,017 y -0,024), siempre próximo a cero. En cambio, al quitar los puntos influyentes la interacción con Large deja de poder estimarse, ya que dependía de una única empresa. Esto confirma que la significación de la interacción con Large (p = `r fm(summary(modelo_inter2)$coefficients["Num_Departamentos_IA:SizeLarge", "Pr(>|t|)"], 3)`) no refleja un efecto real de la IA. La interacción en Micro es más sensible: pasa de p = `r fm(p_micro, 3)` en el modelo original a un valor t de `r fm(t_rob["Num_Departamentos_IA:SizeMicro", "t value"], 2)` en el modelo robusto (|t| > 2 indica que es distinta de cero), por lo que esa tendencia positiva debe interpretarse con cautela.
+
+```{r, fig.cap="Efectos predichos de la inteligencia artificial sobre la productividad según el tamaño de empresa."}
+
+rango_obs <- datos_analisis |>
+  group_by(Size) |>
+  summarise(max_dep = max(Num_Departamentos_IA), .groups = "drop") |>
+  mutate(group = as.character(Size))
+
+effects_pred <- predict_response(
+  modelo_robusto,
+  terms = c("Num_Departamentos_IA [0:5]", "Size")
+) |>
+  as.data.frame() |>
+  mutate(group = as.character(group)) |>
+  left_join(rango_obs, by = "group") |>
+  filter(group != "Large", x <= max_dep)
+
+colores <- c("Micro" = "#2E9E4F", Small = "#1F77B4", "Medium" = "#D95F4B")
+
+ggplot(effects_pred, aes(x = x, y = predicted)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = 0.2) +
+  geom_line(aes(color = group), linewidth = 1) +
+  scale_color_manual(values = colores) +
+  scale_fill_manual(values = colores) +
+  coord_cartesian(ylim = c(1.8, 3.2)) +
+  labs(
+    title = "Efectos de la Inteligencia Artificial en la Productividad",
+    subtitle = "Basado en el modelo de regresión robusta",
+    x = "Nº de departamentos con IA",
+    y = "Productividad predicha (log10)",
+    color = "Tamaño de empresa",
+    fill = "Tamaño de empresa",
+    caption = "No se muestra Large: solo hay 1 empresa Large con IA y la predicción no es fiable.\nCada línea se dibuja solo hasta el máximo de departamentos observado en su grupo."
+  ) +
+  theme_minimal()
+```
+El gráfico muestra las predicciones del modelo de regresión robusta para cada tamaño de empresa, dibujadas solo en el rango de departamentos con IA donde hay datos. Para las empresas Medium (rojo) y Small (azul) la tendencia es casi plana, lo que indica que tener más departamentos con IA no se asocia a mayor productividad. En las Micro (verde) se ve una ligera subida, pero con bastante margen de error y basada en muy pocas empresas con IA. Hemos excluido las Large del gráfico porque solo una de las 21 usa IA, y con ella el modelo extrapola valores que no son realistas ni fiables.
+
+# Conclusiones
+
+Con las `r fm(nrow(datos_analisis), 0)` empresas que tienen información financiera y respuestas de IA en 2023, la adopción es muy poco frecuente: aproximadamente el `r fm(pct_sin_ia, 0)` % no usa IA en ninguno de los cinco departamentos analizados, y su uso crece con el tamaño de la empresa. Para las empresas Medium, un departamento más con IA se asocia a un cambio de productividad prácticamente nulo (factor `r fm(10^b_ia["Estimate"], 2)`, IC 95 % de `r fm(b_ia["2.5 %"], 3)` a `r fm(b_ia["97.5 %"], 3)` en escala log10, p = `r fm(p_ia, 2)`), y el modelo explica solo el `r fm(100 * r2, 1)` % de la variabilidad. 
+
+La interacción con el tamaño es significativa solo por la categoría Large, donde una única empresa de las `r tab_size$n[tab_size$Size == "Large"]` usa IA y concentra toda la influencia; al excluirla, la interacción no es estimable. La tendencia ligeramente positiva en Micro es sensible al método de estimación y se basa en muy pocos casos. Además, los residuos se desvían de la normalidad y muestran signos de heterocedasticidad; la regresión robusta, menos sensible a estos problemas, no cambia la conclusión. Por tanto, nuestros datos no permiten confirmar la hipótesis de que más IA se asocie a más productividad y, en cualquier caso, se trataría de una asociación, no de causalidad. Este resultado es coherente con la paradoja de la productividad descrita en la introducción: es posible que la adopción de IA, aún incipiente en 2023, no haya tenido tiempo de traducirse en mayor valor añadido.
+
+**Implicaciones para la empresa.** Los resultados no respaldan que adoptar IA, por sí sola, aumente la productividad medida como valor añadido por empleado. Es probable que el valor dependa de cómo y para qué se implante, algo que no podemos analizar con estos datos.
+
+**Limitaciones.** (1) El 61 % de las empresas de la muestra no tiene información financiera. (2) Solo hay una empresa Large con IA, por lo que no se puede evaluar el efecto en las grandes empresas. (3) La IA se detecta a partir de la web de la empresa (una señal indirecta del uso real) y se compara con datos financieros de 2023. (4) La productividad se mide solo como VA por empleado y no se controla por sector u otras variables. (5) Es un estudio observacional de un único año.
+
+# Referencias y Bibliografía
+
+* **Apuntes y materiales de clase:** 
+   - Martínez Barbero, X. Transformación y limpieza de datos. IN1 Inteligencia de Negocios 1, Universitat Politècnica de València. 
+   - Martínez Barbero, X. Visualización y transformación de datos. IN1 Inteligencia de Negocios 1, Universitat Politècnica de València.
+   - Martínez Barbero, X. Funciones, valores anómalos y automatización. IN1 Inteligencia de Negocios 1, Universitat Politècnica de València.   
+   - Martínez Barbero, X. Análisis descriptivo de datos. IN1 Inteligencia de Negocios 1, Universitat Politècnica de València.   
+   - Hervás Marín, D. (2026). Transformaciones de datos (Práctica 1). Universitat Politècnica de València
+   - Hervás Marín, D. (2026). Funciones apply y clickR (PDF). Universitat Politècnica de València.
+   - Hervás Marín, D. (2026). Preparación de bases de datos (PDF). Universitat Politècnica de València   
+   - Hervás Marín, D. (2026). Regresión Lineal. Parametrización, ajuste e interpretación (PDF). Universitat Politècnica de València.  
+   - Hervás Marín, D. (2026). Diagnostico de asunciones Regresión Lineal (PDF). Universitat Politècnica de València.  
+   - Hervás Marín, D. (2026). Datos faltantes y datos censurados (Práctica 2). Universitat Politècnica de València.  
+   - Hervás Marín, D. (2026). Regresión Lineal. Ajuste e interpretación (Práctica 3). Universitat Politècnica de València. 
+   
+    
+* **Literatura citada:**
+   - Brynjolfsson, E., Rock, D. y Syverson, C. (2019). Artificial Intelligence and the Modern Productivity Paradox: A Clash of Expectations and Statistics. En A. Agrawal, J. Gans y A. Goldfarb (eds.), *The Economics of Artificial Intelligence: An Agenda* (pp. 23-57). University of Chicago Press.
+   - Solow, R. M. (1987). We'd better watch out. *New York Times Book Review*, 12 de julio, p. 36.
+
+* **Asistencia técnica y metodológica:** Gemini. (2026). *Modelo de lenguaje para soporte en programación R, RMarkdown y revisión de redacción*. 
+
+* **Paletas de colores:** R-Charts. (s. f.). *Guía de colores y paletas para gráficos en R*. Disponible en: [https://r-charts.com/es/colores/]
+
